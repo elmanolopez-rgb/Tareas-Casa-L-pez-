@@ -1,0 +1,764 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Casa López · Tareas</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 rx=%2222%22 fill=%22%232B3B3A%22/><text x=%2250%22 y=%2268%22 font-size=%2258%22 text-anchor=%22middle%22>🏠</text></svg>">
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<style>
+  :root{
+    --cream:#F6F1E7; --clay:#C86A4B; --sage:#7C9070; --ink:#2B3B3A; --gold:#D9A441;
+    --line:#E3DDC8; --muted:#9A9484; --card:#ffffff;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  body{margin:0; font-family:Georgia,'Iowan Old Style',serif; background:var(--cream);
+    background-image:radial-gradient(#E3DDC8 1px, transparent 1px); background-size:18px 18px;
+    color:var(--ink); }
+  .sans{font-family:-apple-system,system-ui,sans-serif;}
+  #app{max-width:480px; margin:0 auto; min-height:100vh; position:relative; padding-bottom:76px;}
+
+  /* auth */
+  .authShell{min-height:100vh; display:flex; align-items:center; justify-content:center; padding:20px;}
+  .authCard{background:var(--card); border-radius:18px; padding:34px 26px; width:100%; max-width:380px;
+    box-shadow:0 10px 30px rgba(43,59,58,.12); text-align:center;}
+  .logoMark{width:52px;height:52px;border-radius:12px;background:var(--ink);display:flex;align-items:center;
+    justify-content:center; margin:0 auto 14px; transform:rotate(-3deg); font-size:24px;}
+  .authTitle{font-size:22px; font-weight:700;}
+  .authSub{font-family:-apple-system,system-ui,sans-serif; font-size:12.5px; color:var(--muted); margin-top:4px;}
+  .field{display:flex; flex-direction:column; gap:5px; text-align:left; margin-top:12px;}
+  .fieldLabel{font-family:-apple-system,system-ui,sans-serif; font-size:11.5px; font-weight:600; color:#5A5748;}
+  .inputWrap{display:flex; align-items:center; gap:8px; border:1.5px solid var(--line); border-radius:10px;
+    padding:10px 12px; background:#FAF8F1;}
+  .inputWrap input, .inputWrap select{border:none; outline:none; background:transparent; font-family:-apple-system,system-ui,sans-serif;
+    font-size:14px; flex:1; color:var(--ink); width:100%;}
+  .eyeBtn{background:none;border:none;cursor:pointer;padding:2px;font-size:16px;}
+  .primaryBtn{background:var(--clay); color:#fff; border:none; border-radius:10px; padding:12px;
+    font-family:-apple-system,system-ui,sans-serif; font-weight:700; font-size:14px; cursor:pointer; margin-top:14px; width:100%;}
+  .linkBtn{margin-top:16px; background:none; border:none; color:var(--sage); font-family:-apple-system,system-ui,sans-serif;
+    font-size:12.5px; font-weight:600; cursor:pointer;}
+  .errText{color:#B4453A; font-family:-apple-system,system-ui,sans-serif; font-size:12px; text-align:left; margin-top:8px;}
+
+  /* header */
+  header{padding:18px 18px 12px; border-bottom:1px solid var(--line);}
+  .headerRow{display:flex; align-items:center; justify-content:space-between;}
+  .brandBox{display:flex; align-items:center; gap:10px;}
+  .brand{font-weight:700; font-size:17px;}
+  .brandSub{font-family:-apple-system,system-ui,sans-serif; font-size:11px; color:var(--muted);}
+  .iconBtn{position:relative; background:none; border:none; cursor:pointer; padding:6px; font-size:19px;}
+  .badge{position:absolute; top:0; right:0; background:var(--clay); color:#fff; font-size:10px;
+    font-family:-apple-system,system-ui,sans-serif; font-weight:700; border-radius:999px; min-width:16px; height:16px;
+    display:flex; align-items:center; justify-content:center; padding:0 3px;}
+  .greeting{margin-top:12px; font-size:20px;}
+  .statRow{display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;}
+  .statChip{display:flex; align-items:center; gap:5px; font-size:12px; background:#EFE9D8; padding:5px 10px;
+    border-radius:999px; font-family:-apple-system,system-ui,sans-serif; color:#5A5748;}
+
+  main{padding:14px 16px 20px; position:relative;}
+  .filterRow{display:flex; gap:7px; overflow-x:auto; padding-bottom:4px;}
+  .chip{border:1px solid var(--line); border-radius:999px; padding:6px 13px; font-size:12.5px;
+    font-family:-apple-system,system-ui,sans-serif; font-weight:600; white-space:nowrap; cursor:pointer; background:#fff; color:#3A3A32;}
+  .chip.active{color:#fff;}
+
+  .taskCard{background:var(--card); border-radius:12px; padding:12px; display:flex; gap:10px; align-items:flex-start;
+    box-shadow:0 1px 3px rgba(43,59,58,.08); margin-bottom:10px;}
+  .taskIconWrap{width:34px; height:34px; border-radius:9px; display:flex; align-items:center; justify-content:center;
+    flex-shrink:0; font-size:16px;}
+  .taskTitle{font-family:-apple-system,system-ui,sans-serif; font-weight:600; font-size:14.5px;}
+  .taskMeta{font-family:-apple-system,system-ui,sans-serif; font-size:11.5px; color:var(--muted); margin-top:2px;}
+  .helpTag{font-size:10px; background:#FBEFE9; color:var(--clay); padding:2px 7px; border-radius:999px;
+    font-family:-apple-system,system-ui,sans-serif; font-weight:700; margin-left:6px;}
+  .assignMini{margin-top:6px; font-size:11px; font-family:-apple-system,system-ui,sans-serif; border:1px solid var(--line);
+    border-radius:6px; padding:3px 5px; background:#FAF8F1; color:#5A5748;}
+  .taskActions{display:flex; flex-direction:column; gap:6px; align-items:flex-end;}
+  .checkBtn{width:30px; height:30px; border-radius:999px; border:1.5px solid var(--line); background:#fff;
+    display:flex; align-items:center; justify-content:center; cursor:pointer; font-size:14px;}
+  .checkBtn.done{background:var(--sage); border-color:var(--sage); color:#fff;}
+  .miniBtn{font-size:10.5px; font-family:-apple-system,system-ui,sans-serif; font-weight:600; border:1px solid var(--line);
+    background:#fff; color:var(--muted); border-radius:7px; padding:4px 7px; cursor:pointer;}
+  .miniBtn.take{background:var(--sage); color:#fff; border-color:var(--sage);}
+  .deleteMini{border:none; background:none; color:#C4BEA9; cursor:pointer; padding:2px; font-size:14px;}
+
+  .fab{position:absolute; bottom:88px; right:16px; width:52px; height:52px; border-radius:999px; background:var(--clay);
+    border:none; box-shadow:0 4px 14px rgba(200,106,75,.45); display:flex; align-items:center; justify-content:center;
+    cursor:pointer; font-size:22px; color:#fff;}
+
+  .bottomNav{position:fixed; bottom:0; left:50%; transform:translateX(-50%); width:100%; max-width:480px;
+    background:#fff; border-top:1px solid var(--line); display:flex; padding:8px 4px 10px; z-index:20;}
+  .navBtn{flex:1; background:none; border:none; display:flex; flex-direction:column; align-items:center; gap:3px;
+    cursor:pointer; padding:4px; font-family:-apple-system,system-ui,sans-serif; font-size:11px; color:var(--muted); position:relative;}
+  .navBtn.active{color:var(--clay); font-weight:700;}
+  .navBtn .icon{font-size:19px;}
+  .navBadge{position:absolute; top:-2px; right:20%; background:var(--clay); color:#fff; font-size:9px; border-radius:999px;
+    min-width:14px; height:14px; display:flex; align-items:center; justify-content:center; font-weight:700;}
+
+  .empty{text-align:center; color:var(--muted); font-family:-apple-system,system-ui,sans-serif; font-size:13px; padding:40px 20px;}
+
+  .announceCard{background:#FFFDF7; border:1px solid #EFE7D2; border-radius:12px; padding:14px; position:relative;
+    box-shadow:0 1px 3px rgba(43,59,58,.06); margin-bottom:12px;}
+  .pinTag{position:absolute; top:-8px; right:12px; background:var(--gold); color:#fff; font-size:9.5px; font-weight:700;
+    padding:2px 8px; border-radius:999px; font-family:-apple-system,system-ui,sans-serif;}
+  .announceTitle{font-weight:700; font-size:15.5px;}
+  .announceMsg{font-family:-apple-system,system-ui,sans-serif; font-size:13px; color:#5A5748; margin-top:4px; line-height:1.4;}
+  .announceMeta{font-family:-apple-system,system-ui,sans-serif; font-size:11px; color:var(--muted); margin-top:8px;}
+
+  .notifRow{display:flex; gap:10px; background:#fff; border-radius:10px; padding:12px; align-items:flex-start; margin-bottom:8px;}
+  .notifDot{width:7px; height:7px; border-radius:999px; background:var(--clay); margin-top:6px; flex-shrink:0;}
+  .notifText{font-family:-apple-system,system-ui,sans-serif; font-size:13.5px;}
+  .notifTime{font-family:-apple-system,system-ui,sans-serif; font-size:11px; color:var(--muted); margin-top:2px;}
+
+  .memberCard{display:flex; align-items:center; gap:12px; background:#fff; border-radius:12px; padding:12px; margin-bottom:10px;}
+  .avatar{width:38px; height:38px; border-radius:999px; color:#fff; display:flex; align-items:center; justify-content:center;
+    font-family:-apple-system,system-ui,sans-serif; font-weight:700; font-size:13px; flex-shrink:0;}
+  .memberName{font-family:-apple-system,system-ui,sans-serif; font-weight:700; font-size:14px;}
+  .memberMeta{font-family:-apple-system,system-ui,sans-serif; font-size:11.5px; color:var(--muted);}
+  .memberScore{font-family:-apple-system,system-ui,sans-serif; font-size:12.5px; font-weight:700; color:#5A5748;}
+
+  .toast{position:fixed; top:14px; left:50%; transform:translateX(-50%); background:var(--ink); color:var(--cream);
+    font-family:-apple-system,system-ui,sans-serif; font-size:12.5px; padding:10px 16px; border-radius:999px; z-index:100;
+    max-width:88%; text-align:center; box-shadow:0 6px 18px rgba(0,0,0,.25);}
+
+  .modalOverlay{position:fixed; inset:0; background:rgba(43,59,58,.45); display:flex; align-items:flex-end;
+    justify-content:center; z-index:60;}
+  .modalCard{background:var(--cream); width:100%; max-width:480px; border-radius:18px 18px 0 0; padding:18px 20px 26px;
+    max-height:80vh; overflow-y:auto;}
+  .modalHeader{display:flex; align-items:center; justify-content:space-between;}
+  .modalTitle{font-weight:700; font-size:17px;}
+  textarea{font-family:-apple-system,system-ui,sans-serif;}
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script>
+/* =========================================================
+   CASA LÓPEZ · TAREAS — versión HTML independiente
+   Persistencia local (localStorage) por dispositivo.
+========================================================= */
+const MASTER_EMAIL = "mioipad65@gmail.com";
+const MASTER_PASS = "RDwVucPq7tsqeM";
+
+/* ---------- Firebase (sincronización en tiempo real) ---------- */
+const firebaseConfig = {
+  apiKey: "AIzaSyD3UQ0JE-pSf1Ct-7dulpVa4aDQlSZmJNg",
+  authDomain: "casa-lopez-tareas-eeb9a.firebaseapp.com",
+  projectId: "casa-lopez-tareas-eeb9a",
+  storageBucket: "casa-lopez-tareas-eeb9a.firebasestorage.app",
+  messagingSenderId: "965351698613",
+  appId: "1:965351698613:web:1c6c70fb33c959c4b9cefc"
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+// Un solo documento "hogar" contiene todo: usuarios, tareas, notifs, avisos.
+const HOGAR_ID = "casa-lopez";
+const hogarRef = db.collection("hogares").doc(HOGAR_ID);
+
+const CATEGORIES = {
+  patio:      { label: "Patio",       color: "#7C9070", icon: "🌿" },
+  cocina:     { label: "Cocina",      color: "#C86A4B", icon: "🍽️" },
+  bano:       { label: "Baño",        color: "#3E7C7B", icon: "🛁" },
+  comedor:    { label: "Comedor",     color: "#D9A441", icon: "🪑" },
+  sala:       { label: "Sala",        color: "#5B7C99", icon: "🛋️" },
+  mascotas:   { label: "Mascotas",    color: "#8B5E3C", icon: "🐶" },
+  lavanderia: { label: "Lavandería",  color: "#8E7CC3", icon: "👕" },
+  basura:     { label: "Basura",      color: "#6B6B6B", icon: "🗑️" },
+  compras:    { label: "Compras",     color: "#B85C5C", icon: "🛒" },
+  general:    { label: "General",     color: "#2B3B3A", icon: "✨" },
+};
+
+const DEFAULT_TASKS = [
+  { title: "Limpiar el patio", category: "patio", recurring: "semanal" },
+  { title: "Lavar los trastes", category: "cocina", recurring: "diario" },
+  { title: "Dar de comer a los perros", category: "mascotas", recurring: "diario" },
+  { title: "Bañar a los perros", category: "mascotas", recurring: "quincenal" },
+  { title: "Limpiar la cocina", category: "cocina", recurring: "diario" },
+  { title: "Limpiar el comedor", category: "comedor", recurring: "diario" },
+  { title: "Limpiar la sala", category: "sala", recurring: "diario" },
+  { title: "Limpiar el baño", category: "bano", recurring: "semanal" },
+  { title: "Preparar y sacar la basura", category: "basura", recurring: "diario" },
+  { title: "Regar las plantas", category: "patio", recurring: "diario" },
+  { title: "Lavar ropa", category: "lavanderia", recurring: "semanal" },
+  { title: "Doblar y guardar ropa", category: "lavanderia", recurring: "semanal" },
+  { title: "Tender las camas", category: "general", recurring: "diario" },
+  { title: "Barrer y trapear pisos", category: "general", recurring: "semanal" },
+  { title: "Limpiar ventanas", category: "general", recurring: "quincenal" },
+  { title: "Sacar la basura de reciclaje", category: "basura", recurring: "semanal" },
+  { title: "Limpiar el refrigerador", category: "cocina", recurring: "quincenal" },
+  { title: "Organizar garaje o bodega", category: "general", recurring: "quincenal" },
+  { title: "Lavar el carro", category: "patio", recurring: "quincenal" },
+  { title: "Cambiar sábanas", category: "general", recurring: "semanal" },
+  { title: "Podar el jardín", category: "patio", recurring: "quincenal" },
+  { title: "Comprar despensa", category: "compras", recurring: "semanal" },
+];
+const RECUR_DAYS = { diario: 1, semanal: 7, quincenal: 14 };
+const ROTATION_EPOCH = new Date(2024, 0, 1).getTime(); // lunes de referencia
+function weekIndex(){ return Math.floor((Date.now() - ROTATION_EPOCH) / (7*86400000)); }
+function currentAssignee(task){
+  const wi = weekIndex();
+  if (task.override && task.override.weekIndex === wi) return task.override.email;
+  if (!task.rotation || task.rotation.length === 0) return null;
+  return task.rotation[wi % task.rotation.length];
+}
+function nextAssignee(task){
+  if (!task.rotation || task.rotation.length === 0) return null;
+  return task.rotation[(weekIndex()+1) % task.rotation.length];
+}
+const DAY_NAMES = ["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"];
+function startOfWeek(){
+  const d = new Date(); const dow = (d.getDay()+6)%7;
+  d.setHours(0,0,0,0); d.setDate(d.getDate()-dow); return d;
+}
+function isTaskDueOn(task, dayIndex){
+  if (task.recurring === "diario") return true;
+  if (task.weekday === null || task.weekday === undefined) return false;
+  if (task.recurring === "semanal") return task.weekday === dayIndex;
+  if (task.recurring === "quincenal") return task.weekday === dayIndex && weekIndex()%2===0;
+  return false;
+}
+
+/* ---------- helpers ---------- */
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+const daysSince = (d) => d ? (Date.now() - new Date(d).getTime()) / 86400000 : Infinity;
+function effStatus(t){
+  if (t.status !== "completado") return t.status;
+  return daysSince(t.completedAt) >= (RECUR_DAYS[t.recurring] || 1) ? "pendiente" : "completado";
+}
+function timeAgo(ts){
+  if (!ts) return "";
+  const s = Math.floor((Date.now() - ts) / 1000);
+  if (s < 60) return "hace un momento";
+  if (s < 3600) return `hace ${Math.floor(s/60)} min`;
+  if (s < 86400) return `hace ${Math.floor(s/3600)} h`;
+  return `hace ${Math.floor(s/86400)} d`;
+}
+function formatTime(ts){
+  if (!ts) return "";
+  const d = new Date(ts);
+  const isToday = d.toDateString() === new Date().toDateString();
+  const hora = d.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
+  return isToday ? `hoy ${hora}` : `${d.toLocaleDateString('es-MX',{day:'numeric',month:'short'})} ${hora}`;
+}
+function initials(name){ return (name||"?").trim().split(/\s+/).slice(0,2).map(w=>w[0]?.toUpperCase()).join(""); }
+function colorFor(email){
+  const p = ["#C86A4B","#7C9070","#3E7C7B","#D9A441","#5B7C99","#8B5E3C","#8E7CC3","#B85C5C"];
+  let h=0; for(const c of email) h=(h*31+c.charCodeAt(0))%p.length; return p[h];
+}
+function esc(str){ return (str||"").replace(/[&<>"']/g, m => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m])); }
+
+/* ---------- storage: sesión local (por dispositivo) + datos compartidos en Firestore ---------- */
+function loadLocal(key, fallback){
+  try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; }
+  catch { return fallback; }
+}
+function saveLocal(key, val){ try { localStorage.setItem(key, JSON.stringify(val)); } catch(e){ console.error(e); } }
+
+// Bandera para evitar que nuestras propias escrituras disparen un "toast" de notificación duplicado.
+let suppressNextSnapshotToast = false;
+let firestoreReady = false;
+
+// Escribe un campo (users/tasks/notifs/announcements) en el documento compartido del hogar.
+function syncField(field, val){
+  hogarRef.set({ [field]: val }, { merge: true }).catch(err => console.error("Error guardando en Firestore:", err));
+}
+
+/* ---------- app state ---------- */
+let state = {
+  users: [], tasks: [], notifs: [], announcements: [],
+  session: null, screen: "login", authErr: "", form: { email:"", pass:"", name:"" },
+  tab: "tareas", catFilter: "todas", showAddTask: false, showAddAnn: false,
+  newTask: { title:"", category:"general", recurring:"diario", assignedTo:"" },
+  newAnn: { title:"", message:"" }, toast: null, showPass: false, rotationEditId: null,
+  lastSeenCount: 0,
+};
+
+function defaultUsers(){
+  return [{ email: MASTER_EMAIL, pass: MASTER_PASS, name: "Manolo López", role: "master", joinedAt: Date.now() }];
+}
+function defaultTasks(u){
+  return DEFAULT_TASKS.map((d,i) => ({
+    id: uid(), title: d.title, category: d.category, recurring: d.recurring,
+    weekday: d.recurring === "diario" ? null : i % 7,
+    rotation: [u[0].email], override: null, status: "pendiente", completedBy: null, completedAt: null,
+    helpRequestedBy: null, createdAt: Date.now(),
+  }));
+}
+
+function boot(){
+  const sess = loadLocal("hl-session", null);
+  if (sess) state.session = sess; // se valida contra la lista real de usuarios cuando llegue el primer snapshot
+
+  // Escucha en tiempo real el documento compartido del hogar.
+  // Cualquier cambio hecho desde CUALQUIER dispositivo llega aquí al instante.
+  hogarRef.onSnapshot(async (doc) => {
+    if (!doc.exists){
+      // Primera vez: crear el documento con los datos por defecto.
+      const u = defaultUsers();
+      const t = defaultTasks(u);
+      await hogarRef.set({ users: u, tasks: t, notifs: [], announcements: [] });
+      return; // el propio set() disparará este mismo listener de nuevo con los datos ya creados
+    }
+    const data = doc.data();
+    const newNotifs = data.notifs || [];
+
+    // Detectar notificaciones nuevas (llegadas desde otro dispositivo) para mostrar el toast.
+    if (firestoreReady && state.session && newNotifs.length > state.lastSeenCount){
+      const fresh = newNotifs.slice(state.lastSeenCount);
+      const relevant = fresh.filter(x => x.forEmail === "all" || x.forEmail === state.session.email);
+      if (relevant.length){
+        state.toast = relevant[relevant.length-1].message;
+        setTimeout(()=>{ state.toast = null; render(); }, 4000);
+      }
+    }
+
+    state.users = data.users || [];
+    state.tasks = data.tasks || [];
+    state.notifs = newNotifs;
+    state.announcements = data.announcements || [];
+    state.lastSeenCount = newNotifs.length;
+
+    // Revalidar la sesión guardada localmente contra la lista real de usuarios.
+    if (state.session && !state.users.some(x => x.email === state.session.email)){
+      state.session = null; saveLocal("hl-session", null);
+    }
+    firestoreReady = true;
+    render();
+  }, (err) => {
+    console.error("Error de sincronización con Firestore:", err);
+  });
+
+  render(); // pantalla de carga/login mientras llega el primer snapshot
+}
+
+function pushNotif(message, forEmail="all"){
+  const updated = [...state.notifs, { id: uid(), message, ts: Date.now(), forEmail }].slice(-100);
+  state.notifs = updated; state.lastSeenCount = updated.length;
+  syncField("notifs", updated);
+}
+
+/* ---------- actions ---------- */
+const App = {
+  setForm(field, val){ state.form[field] = val; },
+  togglePass(){
+    state.showPass = !state.showPass;
+    const input = document.getElementById('in-pass');
+    const btn = document.getElementById('eye-btn');
+    if (input) input.type = state.showPass ? 'text' : 'password';
+    if (btn) btn.textContent = state.showPass ? '🙈' : '👁️';
+  },
+  goRegister(){ state.screen="register"; state.authErr=""; render(); },
+  goLogin(){ state.screen="login"; state.authErr=""; render(); },
+
+  login(e){
+    e.preventDefault();
+    const email = document.getElementById("in-email").value.trim().toLowerCase();
+    const pass = document.getElementById("in-pass").value.trim();
+    const u = state.users.find(x => x.email.toLowerCase() === email);
+    if (!u || u.pass !== pass){ state.authErr = "Correo o clave incorrectos."; render(); return; }
+    state.session = { email: u.email, name: u.name, role: u.role };
+    saveLocal("hl-session", state.session);
+    state.authErr = ""; render();
+  },
+  register(e){
+    e.preventDefault();
+    const name = document.getElementById("in-name").value.trim();
+    const email = document.getElementById("in-email").value.trim().toLowerCase();
+    const pass = document.getElementById("in-pass").value.trim();
+    if (!email || !name || pass.length < 4){ state.authErr = "Completa nombre, correo y una clave de al menos 4 caracteres."; render(); return; }
+    if (state.users.some(x => x.email.toLowerCase() === email)){ state.authErr = "Ese correo ya está registrado."; render(); return; }
+    const newUser = { email, pass, name, role:"miembro", joinedAt: Date.now() };
+    state.users = [...state.users, newUser]; syncField("users", state.users);
+    state.tasks = state.tasks.map(t => t.rotation.includes(email) ? t : {...t, rotation: [...t.rotation, email]});
+    syncField("tasks", state.tasks);
+    pushNotif(`${newUser.name} se unió a la familia 🎉 y ya entra en los turnos de todas las tareas`, "all");
+    state.session = { email, name, role:"miembro" }; saveLocal("hl-session", state.session);
+    state.authErr=""; render();
+  },
+  logout(){ state.session=null; localStorage.removeItem("hl-session"); state.tab="tareas"; render(); },
+
+  setTab(t){ state.tab = t; render(); },
+  setFilter(c){ state.catFilter = c; render(); },
+
+  complete(id){
+    const task = state.tasks.find(t=>t.id===id);
+    state.tasks = state.tasks.map(t => t.id===id ? {...t, status:"completado", completedBy: state.session.email, completedAt: Date.now(), helpRequestedBy: null} : t);
+    syncField("tasks", state.tasks);
+    pushNotif(`✅ ${state.session.name} completó "${task.title}"`, "all");
+    render();
+  },
+  requestHelp(id){
+    const task = state.tasks.find(t=>t.id===id);
+    state.tasks = state.tasks.map(t => t.id===id ? {...t, status:"ayuda", helpRequestedBy: state.session.email} : t);
+    syncField("tasks", state.tasks);
+    pushNotif(`🙋 ${state.session.name} pidió apoyo con "${task.title}"`, "all");
+    render();
+  },
+  takeOver(id){
+    const task = state.tasks.find(t=>t.id===id);
+    state.tasks = state.tasks.map(t => t.id===id ? {...t, status:"pendiente", override: { weekIndex: weekIndex(), email: state.session.email }, helpRequestedBy: null} : t);
+    syncField("tasks", state.tasks);
+    pushNotif(`🤝 ${state.session.name} tomó "${task.title}" esta semana para ayudar`, "all");
+    render();
+  },
+  overrideWeek(id, email){
+    state.tasks = state.tasks.map(t => t.id===id ? {...t, override: email ? { weekIndex: weekIndex(), email } : null} : t);
+    syncField("tasks", state.tasks);
+    if (email){ const p = state.users.find(u=>u.email===email); pushNotif(`📌 Esta semana esa tarea la hace ${p?p.name:email}`, "all"); }
+    render();
+  },
+  openRotation(id){ state.rotationEditId = id; render(); },
+  closeRotation(){ state.rotationEditId = null; render(); },
+  setWeekday(id, val){
+    state.tasks = state.tasks.map(t => t.id===id ? {...t, weekday: parseInt(val,10)} : t);
+    syncField("tasks", state.tasks); render();
+  },
+  toggleRotationMember(id, email){
+    state.tasks = state.tasks.map(t => {
+      if (t.id !== id) return t;
+      const has = t.rotation.includes(email);
+      const rotation = has ? t.rotation.filter(e=>e!==email) : [...t.rotation, email];
+      return {...t, rotation};
+    });
+    syncField("tasks", state.tasks);
+    render();
+  },
+  deleteTask(id){ state.tasks = state.tasks.filter(t=>t.id!==id); syncField("tasks", state.tasks); render(); },
+
+  openAddTask(){ state.showAddTask = true; render(); },
+  closeAddTask(){ state.showAddTask = false; render(); },
+  setNewTask(field, val){ state.newTask[field] = val; },
+  addTask(){
+    const title = document.getElementById("nt-title").value.trim();
+    if (!title) return;
+    const checked = Array.from(document.querySelectorAll(".nt-rotcheck:checked")).map(el => el.value);
+    const t = {
+      id: uid(), title, category: state.newTask.category, recurring: state.newTask.recurring,
+      rotation: checked.length ? checked : state.users.map(u=>u.email), override: null,
+      status:"pendiente", completedBy:null, completedAt:null,
+      helpRequestedBy:null, createdAt: Date.now(),
+    };
+    state.tasks = [t, ...state.tasks]; syncField("tasks", state.tasks);
+    pushNotif(`🆕 Nueva tarea: "${t.title}"`, "all");
+    state.newTask = { title:"", category:"general", recurring:"diario", assignedTo:"" };
+    state.showAddTask = false; render();
+  },
+
+  openAddAnn(){ state.showAddAnn = true; render(); },
+  closeAddAnn(){ state.showAddAnn = false; render(); },
+  addAnn(){
+    const title = document.getElementById("na-title").value.trim();
+    const message = document.getElementById("na-msg").value.trim();
+    if (!title) return;
+    const a = { id: uid(), title, message, author: state.session.name, authorEmail: state.session.email,
+      createdAt: Date.now(), pinned: state.session.role === "master" };
+    state.announcements = [a, ...state.announcements]; syncField("announcements", state.announcements);
+    pushNotif(`📣 Aviso: "${a.title}"`, "all");
+    state.showAddAnn = false; render();
+  },
+};
+
+/* ---------- render ---------- */
+function render(){
+  const root = document.getElementById("app");
+  if (!firestoreReady){
+    root.innerHTML = renderLoading();
+    return;
+  }
+  if (!state.session){
+    root.innerHTML = state.screen === "login" ? renderLogin() : renderRegister();
+    return;
+  }
+  root.innerHTML = renderApp();
+}
+
+function renderLoading(){
+  return `
+  <div class="authShell"><div class="authCard">
+    <div class="logoMark">🏠</div>
+    <div class="authTitle">Casa López</div>
+    <div class="authSub">Conectando en tiempo real…</div>
+  </div></div>`;
+}
+
+function renderLogin(){
+  return `
+  <div class="authShell"><div class="authCard">
+    <div class="logoMark">🏠</div>
+    <div class="authTitle">Casa López</div>
+    <div class="authSub">Tablero familiar de tareas del hogar</div>
+    <form onsubmit="App.login(event)">
+      <div class="field"><span class="fieldLabel">Correo electrónico</span>
+        <div class="inputWrap">📧 <input id="in-email" type="email" autocapitalize="none" required placeholder="tu@correo.com" value="${esc(state.form.email)}"></div></div>
+      <div class="field"><span class="fieldLabel">Clave</span>
+        <div class="inputWrap">🔒 <input id="in-pass" type="${state.showPass?'text':'password'}" required placeholder="••••••••">
+        <button type="button" id="eye-btn" class="eyeBtn" onclick="App.togglePass()">${state.showPass?'🙈':'👁️'}</button></div></div>
+      ${state.authErr ? `<div class="errText">${esc(state.authErr)}</div>` : ""}
+      <button type="submit" class="primaryBtn">Entrar</button>
+    </form>
+    <button class="linkBtn" onclick="App.goRegister()">¿Nuevo en la familia? Regístrate ›</button>
+  </div></div>`;
+}
+function renderRegister(){
+  return `
+  <div class="authShell"><div class="authCard">
+    <div class="logoMark">➕</div>
+    <div class="authTitle">Únete a la familia</div>
+    <div class="authSub">Regístrate para ver y completar tareas</div>
+    <form onsubmit="App.register(event)">
+      <div class="field"><span class="fieldLabel">Nombre</span>
+        <div class="inputWrap">🙂 <input id="in-name" required placeholder="Tu nombre"></div></div>
+      <div class="field"><span class="fieldLabel">Correo electrónico</span>
+        <div class="inputWrap">📧 <input id="in-email" type="email" autocapitalize="none" required placeholder="tu@correo.com"></div></div>
+      <div class="field"><span class="fieldLabel">Clave</span>
+        <div class="inputWrap">🔒 <input id="in-pass" type="${state.showPass?'text':'password'}" required placeholder="Mínimo 4 caracteres">
+        <button type="button" id="eye-btn" class="eyeBtn" onclick="App.togglePass()">${state.showPass?'🙈':'👁️'}</button></div></div>
+      ${state.authErr ? `<div class="errText">${esc(state.authErr)}</div>` : ""}
+      <button type="submit" class="primaryBtn">Crear cuenta</button>
+    </form>
+    <button class="linkBtn" onclick="App.goLogin()">Ya tengo cuenta, entrar ›</button>
+  </div></div>`;
+}
+
+function renderApp(){
+  const session = state.session;
+  const effTasks = state.tasks.map(t => ({...t, effStatus: effStatus(t)}));
+  const myUnread = state.notifs.filter(n => n.forEmail === "all" || n.forEmail === session.email);
+  const pendingCount = effTasks.filter(t => t.effStatus !== "completado").length;
+  const helpCount = effTasks.filter(t => t.effStatus === "ayuda").length;
+
+  return `
+  ${state.toast ? `<div class="toast">${esc(state.toast)}</div>` : ""}
+  <header>
+    <div class="headerRow">
+      <div class="brandBox"><div class="logoMark" style="width:38px;height:38px;font-size:16px;">🏠</div>
+        <div><div class="brand">Casa López</div><div class="brandSub">Tablero de tareas</div></div></div>
+      <div style="display:flex;align-items:center;gap:2px;">
+        <button class="iconBtn" onclick="App.setTab('notificaciones')">🔔 ${myUnread.length>0?`<span class="badge">${Math.min(myUnread.length,99)}</span>`:""}</button>
+        <button class="iconBtn" onclick="App.logout()" title="Salir">🚪</button>
+      </div>
+    </div>
+    <div class="greeting">Hola, ${esc(session.name.split(" ")[0])} ${session.role==="master"?"👑":""}</div>
+    <div class="statRow">
+      <div class="statChip">⚪ ${pendingCount} pendientes</div>
+      ${helpCount>0?`<div class="statChip" style="background:#FBEFE9;">🙋 ${helpCount} piden apoyo</div>`:""}
+    </div>
+  </header>
+  <main>
+    ${state.tab === "tareas" ? renderTareas(effTasks, session) : ""}
+    ${state.tab === "calendario" ? renderCalendario(effTasks) : ""}
+    ${state.tab === "avisos" ? renderAvisos() : ""}
+    ${state.tab === "notificaciones" ? renderNotifs(myUnread) : ""}
+    ${state.tab === "familia" ? renderFamilia(effTasks) : ""}
+  </main>
+  <nav class="bottomNav">
+    <button class="navBtn ${state.tab==='tareas'?'active':''}" onclick="App.setTab('tareas')"><span class="icon">✅</span>Tareas</button>
+    <button class="navBtn ${state.tab==='calendario'?'active':''}" onclick="App.setTab('calendario')"><span class="icon">📅</span>Semana</button>
+    <button class="navBtn ${state.tab==='avisos'?'active':''}" onclick="App.setTab('avisos')"><span class="icon">📣</span>Avisos</button>
+    <button class="navBtn ${state.tab==='notificaciones'?'active':''}" onclick="App.setTab('notificaciones')"><span class="icon">🔔</span>Alertas
+      ${myUnread.length>0?`<span class="navBadge">${Math.min(myUnread.length,9)}</span>`:""}</button>
+    <button class="navBtn ${state.tab==='familia'?'active':''}" onclick="App.setTab('familia')"><span class="icon">👨‍👩‍👧‍👦</span>Familia</button>
+  </nav>
+  ${state.showAddTask ? renderAddTaskModal() : ""}
+  ${state.showAddAnn ? renderAddAnnModal() : ""}
+  ${state.rotationEditId ? renderRotationModal() : ""}
+  `;
+}
+
+function renderTareas(effTasks, session){
+  const cats = Object.entries(CATEGORIES);
+  const visible = state.catFilter === "todas" ? effTasks : effTasks.filter(t => t.category === state.catFilter);
+  const sorted = visible; // no reordenar: la tarea se queda en su lugar al completarse
+  return `
+    <div class="filterRow">
+      <button class="chip ${state.catFilter==='todas'?'active':''}" style="${state.catFilter==='todas'?'background:#2B3B3A;':''}" onclick="App.setFilter('todas')">Todas</button>
+      ${cats.map(([k,c]) => `<button class="chip ${state.catFilter===k?'active':''}" style="${state.catFilter===k?`background:${c.color};border-color:${c.color};`:''}" onclick="App.setFilter('${k}')">${c.label}</button>`).join("")}
+    </div>
+    ${sorted.length===0 ? `<div class="empty">✨<br>No hay tareas en esta categoría todavía.</div>` : ""}
+    <div style="margin-top:8px;">
+      ${sorted.map(t => renderTaskCard(t, session)).join("")}
+    </div>
+    <button class="fab" onclick="App.openAddTask()">＋</button>
+  `;
+}
+
+function renderTaskCard(t, session){
+  const cat = CATEGORIES[t.category] || CATEGORIES.general;
+  const assigneeEmail = currentAssignee(t);
+  const assignedUser = assigneeEmail ? state.users.find(u => u.email === assigneeEmail) : null;
+  const nextUser = (() => { const e = nextAssignee(t); return e ? state.users.find(u=>u.email===e) : null; })();
+  const isMaster = session.role === "master";
+  const done = t.effStatus === "completado";
+  const helpMode = t.effStatus === "ayuda";
+  const completedByUser = t.completedBy ? state.users.find(u=>u.email===t.completedBy) : null;
+  return `
+  <div class="taskCard" style="border-left:5px solid ${cat.color}; opacity:${done?0.65:1};">
+    <div class="taskIconWrap" style="background:${cat.color}22;">${cat.icon}</div>
+    <div style="flex:1;min-width:0;">
+      <div><span class="taskTitle" style="text-decoration:${done?'line-through':'none'};">${esc(t.title)}</span>${helpMode?`<span class="helpTag">pide apoyo</span>`:""}</div>
+      <div class="taskMeta">${cat.label} · ${t.recurring==='diario'?'diaria':t.recurring==='semanal'?'semanal':'quincenal'}
+        ${assignedUser?` · 🔁 esta semana: ${esc(assignedUser.name.split(" ")[0])}`:" · sin turnos asignados"}
+        ${nextUser ? ` · próxima: ${esc(nextUser.name.split(" ")[0])}` : ""}
+        ${done && completedByUser ? ` · ✓ ${esc(completedByUser.name.split(" ")[0])} · ${formatTime(t.completedAt)}` : ""}</div>
+      ${isMaster ? `
+        <div style="display:flex; gap:6px; margin-top:6px; flex-wrap:wrap;">
+          <select class="assignMini" onchange="App.overrideWeek('${t.id}', this.value)">
+            <option value="">Reasignar solo esta semana…</option>
+            ${state.users.map(u => `<option value="${u.email}" ${assigneeEmail===u.email && t.override && t.override.weekIndex===weekIndex() ?'selected':''}>${esc(u.name)}</option>`).join("")}
+          </select>
+          <button class="miniBtn" onclick="App.openRotation('${t.id}')">🔁 editar turnos</button>
+        </div>` : ""}
+    </div>
+    <div class="taskActions">
+      <button class="checkBtn ${done?'done':''}" onclick="App.complete('${t.id}')">${done?'✓':'○'}</button>
+      ${!done && !helpMode ? `<button class="miniBtn" onclick="App.requestHelp('${t.id}')">🙋 apoyo</button>` : ""}
+      ${helpMode && t.helpRequestedBy!==session.email ? `<button class="miniBtn take" onclick="App.takeOver('${t.id}')">tomar</button>` : ""}
+      ${isMaster ? `<button class="deleteMini" onclick="App.deleteTask('${t.id}')">✕</button>` : ""}
+    </div>
+  </div>`;
+}
+
+function renderRotationModal(){
+  const t = state.tasks.find(x => x.id === state.rotationEditId);
+  if (!t) return "";
+  const cat = CATEGORIES[t.category] || CATEGORIES.general;
+  return `
+  <div class="modalOverlay" onclick="if(event.target===this) App.closeRotation()">
+    <div class="modalCard">
+      <div class="modalHeader"><span class="modalTitle">Turnos: ${esc(t.title)}</span><button class="iconBtn" onclick="App.closeRotation()">✕</button></div>
+      ${t.recurring !== "diario" ? `
+        <div class="field" style="margin-top:8px;"><span class="fieldLabel">Día de la semana</span>
+          <div class="inputWrap"><select onchange="App.setWeekday('${t.id}', this.value)">
+            ${DAY_NAMES.map((d,i) => `<option value="${i}" ${t.weekday===i?'selected':''}>${d}</option>`).join("")}
+          </select></div></div>` : ""}
+      <div class="fieldLabel" style="margin-top:8px;">Quiénes rotan esta tarea, en orden. Se activa un nuevo turno cada semana.</div>
+      <div style="display:flex; flex-direction:column; gap:8px; margin-top:10px;">
+        ${state.users.map((u,i) => {
+          const inRot = t.rotation.includes(u.email);
+          const pos = t.rotation.indexOf(u.email);
+          return `<label class="memberCard" style="margin-bottom:0; cursor:pointer;">
+            <input type="checkbox" ${inRot?'checked':''} onchange="App.toggleRotationMember('${t.id}','${u.email}')" style="width:18px;height:18px;">
+            <div class="avatar" style="background:${colorFor(u.email)};">${initials(u.name)}</div>
+            <div style="flex:1;"><div class="memberName">${esc(u.name)}</div>
+              <div class="memberMeta">${inRot ? `turno #${pos+1} en la rotación` : "no participa en esta tarea"}</div></div>
+          </label>`;
+        }).join("")}
+      </div>
+      <button class="primaryBtn" onclick="App.closeRotation()">Listo</button>
+    </div>
+  </div>`;
+}
+
+function renderCalendario(effTasks){
+  const monday = startOfWeek();
+  const todayStr = new Date().toDateString();
+  const days = Array.from({length:7}, (_,i) => {
+    const d = new Date(monday); d.setDate(monday.getDate()+i);
+    return { idx: i, date: d, isToday: d.toDateString() === todayStr };
+  });
+  return `
+    <div style="display:flex; flex-direction:column; gap:14px;">
+      ${days.map(day => {
+        const due = effTasks.filter(t => isTaskDueOn(t, day.idx));
+        return `
+        <div style="background:${day.isToday?'#FFFDF7':'#fff'}; border:1px solid ${day.isToday?'#D9A441':'#EFE7D2'}; border-radius:12px; padding:12px 14px;">
+          <div style="display:flex; align-items:baseline; justify-content:space-between; margin-bottom:${due.length?'8px':'0'};">
+            <span style="font-weight:700; font-size:14.5px;">${DAY_NAMES[day.idx]} ${day.isToday?'· hoy':''}</span>
+            <span class="sans" style="font-size:11px; color:var(--muted);">${day.date.toLocaleDateString('es-MX',{day:'numeric',month:'short'})}</span>
+          </div>
+          ${due.length===0 ? `<div class="sans" style="font-size:12px; color:var(--muted);">Sin tareas programadas</div>` : ""}
+          ${due.map(t => {
+            const cat = CATEGORIES[t.category] || CATEGORIES.general;
+            const assigneeEmail = currentAssignee(t);
+            const assignedUser = assigneeEmail ? state.users.find(u=>u.email===assigneeEmail) : null;
+            const doneToday = day.isToday && t.effStatus === "completado" && t.completedAt && new Date(t.completedAt).toDateString() === todayStr;
+            return `<div style="display:flex; align-items:center; gap:8px; padding:6px 0; border-top:1px solid #F1ECDC;">
+              <span style="font-size:15px;">${cat.icon}</span>
+              <span class="sans" style="flex:1; font-size:13px; text-decoration:${doneToday?'line-through':'none'}; opacity:${doneToday?0.6:1};">${esc(t.title)}</span>
+              ${assignedUser ? `<span class="sans" style="font-size:11px; color:#5A5748; background:#EFE9D8; padding:2px 8px; border-radius:999px;">${esc(assignedUser.name.split(" ")[0])}</span>` : ""}
+              ${doneToday ? `<span style="color:var(--sage);">✓</span>` : ""}
+            </div>`;
+          }).join("")}
+        </div>`;
+      }).join("")}
+    </div>
+  `;
+}
+
+function renderAvisos(){
+  const sorted = [...state.announcements].sort((a,b) => (b.pinned-a.pinned) || (b.createdAt-a.createdAt));
+  return `
+    ${sorted.length===0 ? `<div class="empty">✨<br>Sin avisos por ahora. Publica el primero.</div>` : ""}
+    ${sorted.map(a => `
+      <div class="announceCard">
+        ${a.pinned ? `<div class="pinTag">📌 fijado</div>` : ""}
+        <div class="announceTitle">${esc(a.title)}</div>
+        ${a.message ? `<div class="announceMsg">${esc(a.message)}</div>` : ""}
+        <div class="announceMeta">${esc(a.author)} · ${timeAgo(a.createdAt)}</div>
+      </div>`).join("")}
+    <button class="fab" onclick="App.openAddAnn()">📣</button>
+  `;
+}
+
+function renderNotifs(myUnread){
+  const list = [...myUnread].reverse();
+  return `
+    ${list.length===0 ? `<div class="empty">✨<br>Todavía no hay actividad.</div>` : ""}
+    ${list.map(n => `<div class="notifRow"><div class="notifDot"></div>
+      <div style="flex:1;"><div class="notifText">${esc(n.message)}</div><div class="notifTime">${timeAgo(n.ts)}</div></div></div>`).join("")}
+  `;
+}
+
+function renderFamilia(effTasks){
+  return state.users.map(u => {
+    const done = effTasks.filter(t => t.completedBy===u.email && t.effStatus==="completado").length;
+    return `<div class="memberCard">
+      <div class="avatar" style="background:${colorFor(u.email)};">${initials(u.name)}</div>
+      <div style="flex:1;"><div class="memberName">${esc(u.name)} ${u.role==='master'?'👑':''}</div>
+        <div class="memberMeta">${esc(u.email)}</div></div>
+      <div class="memberScore">⭐ ${done}</div>
+    </div>`;
+  }).join("");
+}
+
+function renderAddTaskModal(){
+  return `
+  <div class="modalOverlay" onclick="if(event.target===this) App.closeAddTask()">
+    <div class="modalCard">
+      <div class="modalHeader"><span class="modalTitle">Nueva tarea</span><button class="iconBtn" onclick="App.closeAddTask()">✕</button></div>
+      <div class="field"><span class="fieldLabel">Título</span>
+        <div class="inputWrap"><input id="nt-title" placeholder="Ej. Limpiar la terraza"></div></div>
+      <div class="field"><span class="fieldLabel">Categoría</span>
+        <div class="inputWrap"><select id="nt-cat" onchange="App.setNewTask('category', this.value)">
+          ${Object.entries(CATEGORIES).map(([k,c]) => `<option value="${k}">${c.label}</option>`).join("")}
+        </select></div></div>
+      <div class="field"><span class="fieldLabel">Frecuencia</span>
+        <div class="inputWrap"><select id="nt-rec" onchange="App.setNewTask('recurring', this.value)">
+          <option value="diario">Diaria</option><option value="semanal">Semanal</option><option value="quincenal">Quincenal</option>
+        </select></div></div>
+      <div class="field"><span class="fieldLabel">¿Quiénes rotan esta tarea?</span>
+        <div style="display:flex; flex-direction:column; gap:6px; margin-top:4px;">
+          ${state.users.map(u => `<label style="display:flex; align-items:center; gap:8px; font-family:-apple-system,system-ui,sans-serif; font-size:13px;">
+            <input type="checkbox" class="nt-rotcheck" value="${u.email}" checked style="width:16px;height:16px;"> ${esc(u.name)}</label>`).join("")}
+        </div></div>
+      <button class="primaryBtn" onclick="App.addTask()">Crear tarea</button>
+    </div>
+  </div>`;
+}
+function renderAddAnnModal(){
+  return `
+  <div class="modalOverlay" onclick="if(event.target===this) App.closeAddAnn()">
+    <div class="modalCard">
+      <div class="modalHeader"><span class="modalTitle">Nuevo aviso</span><button class="iconBtn" onclick="App.closeAddAnn()">✕</button></div>
+      <div class="field"><span class="fieldLabel">Título</span>
+        <div class="inputWrap"><input id="na-title" placeholder="Ej. Visita el sábado"></div></div>
+      <div class="field"><span class="fieldLabel">Mensaje</span>
+        <div class="inputWrap"><textarea id="na-msg" style="min-height:80px;resize:vertical;" placeholder="Detalles del aviso o recordatorio..."></textarea></div></div>
+      <button class="primaryBtn" onclick="App.addAnn()">Publicar aviso</button>
+    </div>
+  </div>`;
+}
+
+boot();
+</script>
+</body>
+</html>
