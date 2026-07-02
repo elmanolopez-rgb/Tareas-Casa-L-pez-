@@ -204,6 +204,17 @@ function nextAssignee(task){
   if (!task.rotation || task.rotation.length === 0) return null;
   return task.rotation[(weekIndex()+1) % task.rotation.length];
 }
+// Devuelve los próximos `count` turnos (email + en cuántas semanas), sin repetir el turno actual.
+function upcomingAssignees(task, count){
+  if (!task.rotation || task.rotation.length === 0) return [];
+  const wi = weekIndex();
+  const out = [];
+  const max = Math.min(count, task.rotation.length - 1);
+  for (let i = 1; i <= max; i++){
+    out.push({ email: task.rotation[(wi + i) % task.rotation.length], weeksAhead: i });
+  }
+  return out;
+}
 const DAY_NAMES = ["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"];
 function startOfWeek(){
   const d = new Date(); const dow = (d.getDay()+6)%7;
@@ -598,7 +609,9 @@ function renderTaskCard(t, session){
   const cat = CATEGORIES[t.category] || CATEGORIES.general;
   const assigneeEmail = currentAssignee(t);
   const assignedUser = assigneeEmail ? state.users.find(u => u.email === assigneeEmail) : null;
-  const nextUser = (() => { const e = nextAssignee(t); return e ? state.users.find(u=>u.email===e) : null; })();
+  const upcoming = upcomingAssignees(t, 2)
+    .map(x => ({ user: state.users.find(u => u.email === x.email), weeksAhead: x.weeksAhead }))
+    .filter(x => x.user);
   const isMaster = session.role === "master";
   const done = t.effStatus === "completado";
   const helpMode = t.effStatus === "ayuda";
@@ -609,9 +622,12 @@ function renderTaskCard(t, session){
     <div style="flex:1;min-width:0;">
       <div><span class="taskTitle" style="text-decoration:${done?'line-through':'none'};">${esc(t.title)}</span>${helpMode?`<span class="helpTag">pide apoyo</span>`:""}</div>
       <div class="taskMeta">${cat.label} · ${t.recurring==='diario'?'diaria':t.recurring==='semanal'?'semanal':'quincenal'}
-        ${assignedUser?` · 🔁 esta semana: ${esc(assignedUser.name.split(" ")[0])}`:" · sin turnos asignados"}
-        ${nextUser ? ` · próxima: ${esc(nextUser.name.split(" ")[0])}` : ""}
         ${done && completedByUser ? ` · ✓ ${esc(completedByUser.name.split(" ")[0])} · ${formatTime(t.completedAt)}` : ""}</div>
+      ${assignedUser || upcoming.length ? `
+        <div class="sans" style="display:flex; flex-wrap:wrap; gap:5px; margin-top:6px;">
+          ${assignedUser ? `<span style="font-size:11px; background:${cat.color}22; color:${cat.color}; padding:3px 9px; border-radius:999px; font-weight:700;">🔁 esta semana: ${esc(assignedUser.name.split(" ")[0])}</span>` : `<span style="font-size:11px; background:#F1ECDC; color:var(--muted); padding:3px 9px; border-radius:999px;">sin turnos asignados</span>`}
+          ${upcoming.map(x => `<span style="font-size:11px; background:#EFE9D8; color:#5A5748; padding:3px 9px; border-radius:999px;">${x.weeksAhead===1?'próxima semana':`en ${x.weeksAhead} semanas`}: ${esc(x.user.name.split(" ")[0])}</span>`).join("")}
+        </div>` : ""}
       ${isMaster ? `
         <div style="display:flex; gap:6px; margin-top:6px; flex-wrap:wrap;">
           <select class="assignMini" onchange="App.overrideWeek('${t.id}', this.value)">
