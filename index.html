@@ -422,6 +422,19 @@ const App = {
     syncField("tasks", state.tasks);
     render();
   },
+  moveRotationMember(id, email, dir){
+    state.tasks = state.tasks.map(t => {
+      if (t.id !== id) return t;
+      const rotation = [...t.rotation];
+      const i = rotation.indexOf(email);
+      const j = i + dir;
+      if (i < 0 || j < 0 || j >= rotation.length) return t;
+      [rotation[i], rotation[j]] = [rotation[j], rotation[i]];
+      return {...t, rotation};
+    });
+    syncField("tasks", state.tasks);
+    render();
+  },
   deleteTask(id){ state.tasks = state.tasks.filter(t=>t.id!==id); syncField("tasks", state.tasks); render(); },
 
   openAddTask(){ state.showAddTask = true; render(); },
@@ -621,6 +634,10 @@ function renderRotationModal(){
   const t = state.tasks.find(x => x.id === state.rotationEditId);
   if (!t) return "";
   const cat = CATEGORIES[t.category] || CATEGORIES.general;
+  const inRotUsers = t.rotation.map(email => state.users.find(u=>u.email===email)).filter(Boolean);
+  const outRotUsers = state.users.filter(u => !t.rotation.includes(u.email));
+  const wi = weekIndex();
+  const activeIdx = inRotUsers.length ? wi % inRotUsers.length : -1;
   return `
   <div class="modalOverlay" onclick="if(event.target===this) App.closeRotation()">
     <div class="modalCard">
@@ -630,19 +647,35 @@ function renderRotationModal(){
           <div class="inputWrap"><select onchange="App.setWeekday('${t.id}', this.value)">
             ${DAY_NAMES.map((d,i) => `<option value="${i}" ${t.weekday===i?'selected':''}>${d}</option>`).join("")}
           </select></div></div>` : ""}
-      <div class="fieldLabel" style="margin-top:8px;">Quiénes rotan esta tarea, en orden. Se activa un nuevo turno cada semana.</div>
+
+      <div class="fieldLabel" style="margin-top:14px;">Orden de turnos — quién sigue después de quién. Se activa un nuevo turno cada semana.</div>
+      ${inRotUsers.length===0 ? `<div class="sans" style="font-size:12px; color:var(--muted); margin-top:6px;">Nadie asignado todavía. Agrega participantes abajo.</div>` : ""}
       <div style="display:flex; flex-direction:column; gap:8px; margin-top:10px;">
-        ${state.users.map((u,i) => {
-          const inRot = t.rotation.includes(u.email);
-          const pos = t.rotation.indexOf(u.email);
-          return `<label class="memberCard" style="margin-bottom:0; cursor:pointer;">
-            <input type="checkbox" ${inRot?'checked':''} onchange="App.toggleRotationMember('${t.id}','${u.email}')" style="width:18px;height:18px;">
+        ${inRotUsers.map((u,i) => `
+          <div class="memberCard" style="margin-bottom:0; ${i===activeIdx?`border:1.5px solid ${cat.color};`:''}">
+            <div class="avatar" style="background:${colorFor(u.email)};">${initials(u.name)}</div>
+            <div style="flex:1;"><div class="memberName">${esc(u.name)} ${i===activeIdx?' · turno actual':''}</div>
+              <div class="memberMeta">Turno #${i+1}${i>0?` · después de ${esc(inRotUsers[i-1].name.split(" ")[0])}`:''}</div></div>
+            <div style="display:flex; flex-direction:column; gap:2px;">
+              <button class="miniBtn" ${i===0?'disabled style="opacity:.35;"':''} onclick="App.moveRotationMember('${t.id}','${u.email}',-1)">↑</button>
+              <button class="miniBtn" ${i===inRotUsers.length-1?'disabled style="opacity:.35;"':''} onclick="App.moveRotationMember('${t.id}','${u.email}',1)">↓</button>
+            </div>
+            <button class="deleteMini" onclick="App.toggleRotationMember('${t.id}','${u.email}')" title="Quitar de esta tarea">✕</button>
+          </div>`).join("")}
+      </div>
+
+      <div class="fieldLabel" style="margin-top:18px;">Agregar participantes — no todos hacen todas las tareas.</div>
+      <div style="display:flex; flex-direction:column; gap:8px; margin-top:10px;">
+        ${outRotUsers.length===0 ? `<div class="sans" style="font-size:12px; color:var(--muted);">Todos los miembros ya participan en esta tarea.</div>` : ""}
+        ${outRotUsers.map(u => `
+          <label class="memberCard" style="margin-bottom:0; cursor:pointer; opacity:.7;">
+            <input type="checkbox" onchange="App.toggleRotationMember('${t.id}','${u.email}')" style="width:18px;height:18px;">
             <div class="avatar" style="background:${colorFor(u.email)};">${initials(u.name)}</div>
             <div style="flex:1;"><div class="memberName">${esc(u.name)}</div>
-              <div class="memberMeta">${inRot ? `turno #${pos+1} en la rotación` : "no participa en esta tarea"}</div></div>
-          </label>`;
-        }).join("")}
+              <div class="memberMeta">No participa en esta tarea</div></div>
+          </label>`).join("")}
       </div>
+
       <button class="primaryBtn" onclick="App.closeRotation()">Listo</button>
     </div>
   </div>`;
