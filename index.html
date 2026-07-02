@@ -194,26 +194,45 @@ const DEFAULT_TASKS = [
 const RECUR_DAYS = { diario: 1, semanal: 7, quincenal: 14 };
 const ROTATION_EPOCH = new Date(2024, 0, 1).getTime(); // lunes de referencia
 function weekIndex(){ return Math.floor((Date.now() - ROTATION_EPOCH) / (7*86400000)); }
-function currentAssignee(task){
+function currentAssignee(slot){
   const wi = weekIndex();
-  if (task.override && task.override.weekIndex === wi) return task.override.email;
-  if (!task.rotation || task.rotation.length === 0) return null;
-  return task.rotation[wi % task.rotation.length];
+  if (slot.override && slot.override.weekIndex === wi) return slot.override.email;
+  if (!slot.rotation || slot.rotation.length === 0) return null;
+  return slot.rotation[wi % slot.rotation.length];
 }
-function nextAssignee(task){
-  if (!task.rotation || task.rotation.length === 0) return null;
-  return task.rotation[(weekIndex()+1) % task.rotation.length];
+function nextAssignee(slot){
+  if (!slot.rotation || slot.rotation.length === 0) return null;
+  return slot.rotation[(weekIndex()+1) % slot.rotation.length];
 }
 // Devuelve los próximos `count` turnos (email + en cuántas semanas), sin repetir el turno actual.
-function upcomingAssignees(task, count){
-  if (!task.rotation || task.rotation.length === 0) return [];
+function upcomingAssignees(slot, count){
+  if (!slot.rotation || slot.rotation.length === 0) return [];
   const wi = weekIndex();
   const out = [];
-  const max = Math.min(count, task.rotation.length - 1);
+  const max = Math.min(count, slot.rotation.length - 1);
   for (let i = 1; i <= max; i++){
-    out.push({ email: task.rotation[(wi + i) % task.rotation.length], weeksAhead: i });
+    out.push({ email: slot.rotation[(wi + i) % slot.rotation.length], weeksAhead: i });
   }
   return out;
+}
+// Convierte una tarea del formato antiguo (campos sueltos) al nuevo formato con slots[].
+// Necesario porque ya hay datos reales guardados con el formato viejo.
+function migrateTask(t){
+  if (t.slots) return t;
+  const { rotation, override, status, completedBy, completedAt, helpRequestedBy, points, pointsGivenAt, ...rest } = t;
+  return {
+    ...rest,
+    slots: [{
+      id: uid(), label: null,
+      rotation: rotation || [], override: override || null,
+      status: status || "pendiente", completedBy: completedBy || null, completedAt: completedAt || null,
+      helpRequestedBy: helpRequestedBy || null, points: points || null, pointsGivenAt: pointsGivenAt || null,
+    }],
+  };
+}
+function slotEffStatus(slot, recurring){
+  if (slot.status !== "completado") return slot.status;
+  return daysSince(slot.completedAt) >= (RECUR_DAYS[recurring] || 1) ? "pendiente" : "completado";
 }
 const DAY_NAMES = ["Lunes","Martes","Miércoles","Jueves","Viernes","Sábado","Domingo"];
 function startOfWeek(){
@@ -231,10 +250,6 @@ function isTaskDueOn(task, dayIndex){
 /* ---------- helpers ---------- */
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 const daysSince = (d) => d ? (Date.now() - new Date(d).getTime()) / 86400000 : Infinity;
-function effStatus(t){
-  if (t.status !== "completado") return t.status;
-  return daysSince(t.completedAt) >= (RECUR_DAYS[t.recurring] || 1) ? "pendiente" : "completado";
-}
 function timeAgo(ts){
   if (!ts) return "";
   const s = Math.floor((Date.now() - ts) / 1000);
@@ -275,11 +290,11 @@ function syncField(field, val){
 
 /* ---------- app state ---------- */
 let state = {
-  users: [], tasks: [], notifs: [], announcements: [],
+  users: [], tasks: [], notifs: [], announcements: [], pointsLog: [],
   session: null, screen: "login", authErr: "", form: { email:"", pass:"", name:"" },
   tab: "tareas", catFilter: "todas", showAddTask: false, showAddAnn: false,
-  newTask: { title:"", category:"general", recurring:"diario", assignedTo:"" },
-  newAnn: { title:"", message:"" }, toast: null, showPass: false, rotationEditId: null,
+  newTask: { title:"", category:"general", recurring:"diario", assignedTo:"", slotMode:"1" },
+  newAnn: { title:"", message:"" }, toast: null, showPass: false, rotationEditId: null, rotationEditSlotId: null,
   lastSeenCount: 0,
 };
 
@@ -290,8 +305,9 @@ function defaultTasks(u){
   return DEFAULT_TASKS.map((d,i) => ({
     id: uid(), title: d.title, category: d.category, recurring: d.recurring,
     weekday: d.recurring === "diario" ? null : i % 7,
-    rotation: [u[0].email], override: null, status: "pendiente", completedBy: null, completedAt: null,
-    helpRequestedBy: null, createdAt: Date.now(),
+    createdAt: Date.now(),
+    slots: [{ id: uid(), label: null, rotation: [u[0].email], override: null, status: "pendiente",
+      completedBy: null, completedAt: null, helpRequestedBy: null, points: null, pointsGivenAt: null }],
   }));
 }
 
@@ -306,7 +322,7 @@ function boot(){
       // Primera vez: crear el documento con los datos por defecto.
       const u = defaultUsers();
       const t = defaultTasks(u);
-      await hogarRef.set({ users: u, tasks: t, notifs: [], announcements: [] });
+      await hogarRef.set({ users: u, tasks: t, notifs: [], announcements: [], pointsLog: [] });
       return; // el propio set() disparará este mismo listener de nuevo con los datos ya creados
     }
     const data = doc.data();
@@ -323,10 +339,18 @@ function boot(){
     }
 
     state.users = data.users || [];
-    state.tasks = data.tasks || [];
+    const rawTasks = data.tasks || [];
+    const migratedTasks = rawTasks.map(migrateTask);
+    state.tasks = migratedTasks;
     state.notifs = newNotifs;
     state.announcements = data.announcements || [];
+    state.pointsLog = data.pointsLog || [];
     state.lastSeenCount = newNotifs.length;
+
+    // Si alguna tarea estaba en formato viejo, guardamos ya migrada para no repetir esto cada vez.
+    if (JSON.stringify(migratedTasks) !== JSON.stringify(rawTasks)){
+      syncField("tasks", migratedTasks);
+    }
 
     // Revalidar la sesión guardada localmente contra la lista real de usuarios.
     if (state.session && !state.users.some(x => x.email === state.session.email)){
@@ -379,7 +403,8 @@ const App = {
     if (state.users.some(x => x.email.toLowerCase() === email)){ state.authErr = "Ese correo ya está registrado."; render(); return; }
     const newUser = { email, pass, name, role:"miembro", joinedAt: Date.now() };
     state.users = [...state.users, newUser]; syncField("users", state.users);
-    state.tasks = state.tasks.map(t => t.rotation.includes(email) ? t : {...t, rotation: [...t.rotation, email]});
+    state.tasks = state.tasks.map(t => ({...t, slots: t.slots.map(s =>
+      s.rotation.includes(email) ? s : {...s, rotation: [...s.rotation, email]})}));
     syncField("tasks", state.tasks);
     pushNotif(`${newUser.name} se unió a la familia 🎉 y ya entra en los turnos de todas las tareas`, "all");
     state.session = { email, name, role:"miembro" }; saveLocal("hl-session", state.session);
@@ -390,80 +415,104 @@ const App = {
   setTab(t){ state.tab = t; render(); },
   setFilter(c){ state.catFilter = c; render(); },
 
-  complete(id){
-    const task = state.tasks.find(t=>t.id===id);
-    state.tasks = state.tasks.map(t => t.id===id ? {...t, status:"completado", completedBy: state.session.email, completedAt: Date.now(), helpRequestedBy: null} : t);
+  mapSlot(taskId, slotId, fn){
+    state.tasks = state.tasks.map(t => t.id!==taskId ? t : {...t, slots: t.slots.map(s => s.id!==slotId ? s : fn(s))});
     syncField("tasks", state.tasks);
-    pushNotif(`✅ ${state.session.name} completó "${task.title}"`, "all");
+  },
+  complete(taskId, slotId){
+    const task = state.tasks.find(t=>t.id===taskId);
+    const slot = task.slots.find(s=>s.id===slotId);
+    App.mapSlot(taskId, slotId, s => ({...s, status:"completado", completedBy: state.session.email, completedAt: Date.now(), helpRequestedBy: null}));
+    const label = slot.label ? ` (${slot.label})` : "";
+    pushNotif(`✅ ${state.session.name} completó "${task.title}${label}"`, "all");
     render();
   },
-  requestHelp(id){
-    const task = state.tasks.find(t=>t.id===id);
-    state.tasks = state.tasks.map(t => t.id===id ? {...t, status:"ayuda", helpRequestedBy: state.session.email} : t);
-    syncField("tasks", state.tasks);
-    pushNotif(`🙋 ${state.session.name} pidió apoyo con "${task.title}"`, "all");
+  requestHelp(taskId, slotId){
+    const task = state.tasks.find(t=>t.id===taskId);
+    const slot = task.slots.find(s=>s.id===slotId);
+    App.mapSlot(taskId, slotId, s => ({...s, status:"ayuda", helpRequestedBy: state.session.email}));
+    const label = slot.label ? ` (${slot.label})` : "";
+    pushNotif(`🙋 ${state.session.name} pidió apoyo con "${task.title}${label}"`, "all");
     render();
   },
-  takeOver(id){
-    const task = state.tasks.find(t=>t.id===id);
-    state.tasks = state.tasks.map(t => t.id===id ? {...t, status:"pendiente", override: { weekIndex: weekIndex(), email: state.session.email }, helpRequestedBy: null} : t);
-    syncField("tasks", state.tasks);
-    pushNotif(`🤝 ${state.session.name} tomó "${task.title}" esta semana para ayudar`, "all");
+  takeOver(taskId, slotId){
+    const task = state.tasks.find(t=>t.id===taskId);
+    const slot = task.slots.find(s=>s.id===slotId);
+    App.mapSlot(taskId, slotId, s => ({...s, status:"pendiente", override: { weekIndex: weekIndex(), email: state.session.email }, helpRequestedBy: null}));
+    const label = slot.label ? ` (${slot.label})` : "";
+    pushNotif(`🤝 ${state.session.name} tomó "${task.title}${label}" esta semana para ayudar`, "all");
     render();
   },
-  overrideWeek(id, email){
-    state.tasks = state.tasks.map(t => t.id===id ? {...t, override: email ? { weekIndex: weekIndex(), email } : null} : t);
-    syncField("tasks", state.tasks);
+  overrideWeek(taskId, slotId, email){
+    App.mapSlot(taskId, slotId, s => ({...s, override: email ? { weekIndex: weekIndex(), email } : null}));
     if (email){ const p = state.users.find(u=>u.email===email); pushNotif(`📌 Esta semana esa tarea la hace ${p?p.name:email}`, "all"); }
     render();
   },
-  openRotation(id){ state.rotationEditId = id; render(); },
-  closeRotation(){ state.rotationEditId = null; render(); },
+  setPoints(taskId, slotId, points){
+    const task = state.tasks.find(t=>t.id===taskId);
+    const slot = task.slots.find(s=>s.id===slotId);
+    App.mapSlot(taskId, slotId, s => ({...s, points, pointsGivenAt: s.completedAt}));
+    const person = state.users.find(u=>u.email===slot.completedBy);
+    const log = [...state.pointsLog, { id: uid(), taskId, slotId, taskTitle: task.title, email: slot.completedBy, points, ts: Date.now() }].slice(-1000);
+    state.pointsLog = log; syncField("pointsLog", log);
+    if (person) pushNotif(`🏆 ${state.session.name} le dio ${points} pt${points>1?'s':''} a ${person.name} por "${task.title}"`, "all");
+    render();
+  },
+  openRotation(taskId, slotId){ state.rotationEditId = taskId; state.rotationEditSlotId = slotId; render(); },
+  closeRotation(){ state.rotationEditId = null; state.rotationEditSlotId = null; render(); },
+  setRotationSlot(slotId){ state.rotationEditSlotId = slotId; render(); },
   setWeekday(id, val){
     state.tasks = state.tasks.map(t => t.id===id ? {...t, weekday: parseInt(val,10)} : t);
     syncField("tasks", state.tasks); render();
   },
-  toggleRotationMember(id, email){
-    state.tasks = state.tasks.map(t => {
-      if (t.id !== id) return t;
-      const has = t.rotation.includes(email);
-      const rotation = has ? t.rotation.filter(e=>e!==email) : [...t.rotation, email];
-      return {...t, rotation};
+  toggleRotationMember(taskId, slotId, email){
+    App.mapSlot(taskId, slotId, s => {
+      const has = s.rotation.includes(email);
+      return {...s, rotation: has ? s.rotation.filter(e=>e!==email) : [...s.rotation, email]};
     });
-    syncField("tasks", state.tasks);
     render();
   },
-  moveRotationMember(id, email, dir){
-    state.tasks = state.tasks.map(t => {
-      if (t.id !== id) return t;
-      const rotation = [...t.rotation];
+  moveRotationMember(taskId, slotId, email, dir){
+    App.mapSlot(taskId, slotId, s => {
+      const rotation = [...s.rotation];
       const i = rotation.indexOf(email);
       const j = i + dir;
-      if (i < 0 || j < 0 || j >= rotation.length) return t;
+      if (i < 0 || j < 0 || j >= rotation.length) return s;
       [rotation[i], rotation[j]] = [rotation[j], rotation[i]];
-      return {...t, rotation};
+      return {...s, rotation};
     });
-    syncField("tasks", state.tasks);
     render();
   },
   deleteTask(id){ state.tasks = state.tasks.filter(t=>t.id!==id); syncField("tasks", state.tasks); render(); },
 
   openAddTask(){ state.showAddTask = true; render(); },
   closeAddTask(){ state.showAddTask = false; render(); },
-  setNewTask(field, val){ state.newTask[field] = val; },
+  setNewTask(field, val){ state.newTask[field] = val; render(); },
   addTask(){
     const title = document.getElementById("nt-title").value.trim();
     if (!title) return;
     const checked = Array.from(document.querySelectorAll(".nt-rotcheck:checked")).map(el => el.value);
+    const base = checked.length ? checked : state.users.map(u=>u.email);
+    const mkSlot = (label, rotation) => ({ id: uid(), label, rotation, override: null,
+      status:"pendiente", completedBy:null, completedAt:null, helpRequestedBy:null, points:null, pointsGivenAt:null });
+    // Girar la lista `n` posiciones, para que cada slot arranque con una persona distinta.
+    const rotated = (arr, n) => arr.length ? arr.map((_,i) => arr[(i+n) % arr.length]) : arr;
+    let slots;
+    if (state.newTask.slotMode === "2juntas"){
+      slots = [ mkSlot("Persona 1", base), mkSlot("Persona 2", rotated(base,1)) ];
+    } else if (state.newTask.slotMode === "manana-tarde"){
+      slots = [ mkSlot("Mañana", base), mkSlot("Tarde", rotated(base,1)) ];
+    } else {
+      slots = [ mkSlot(null, base) ];
+    }
     const t = {
       id: uid(), title, category: state.newTask.category, recurring: state.newTask.recurring,
-      rotation: checked.length ? checked : state.users.map(u=>u.email), override: null,
-      status:"pendiente", completedBy:null, completedAt:null,
-      helpRequestedBy:null, createdAt: Date.now(),
+      weekday: state.newTask.recurring === "diario" ? null : 0,
+      createdAt: Date.now(), slots,
     };
     state.tasks = [t, ...state.tasks]; syncField("tasks", state.tasks);
     pushNotif(`🆕 Nueva tarea: "${t.title}"`, "all");
-    state.newTask = { title:"", category:"general", recurring:"diario", assignedTo:"" };
+    state.newTask = { title:"", category:"general", recurring:"diario", assignedTo:"", slotMode:"1" };
     state.showAddTask = false; render();
   },
 
@@ -545,10 +594,11 @@ function renderRegister(){
 
 function renderApp(){
   const session = state.session;
-  const effTasks = state.tasks.map(t => ({...t, effStatus: effStatus(t)}));
+  const effTasks = state.tasks.map(t => ({...t, slots: t.slots.map(s => ({...s, effStatus: slotEffStatus(s, t.recurring)}))}));
+  const allSlots = effTasks.flatMap(t => t.slots);
   const myUnread = state.notifs.filter(n => n.forEmail === "all" || n.forEmail === session.email);
-  const pendingCount = effTasks.filter(t => t.effStatus !== "completado").length;
-  const helpCount = effTasks.filter(t => t.effStatus === "ayuda").length;
+  const pendingCount = allSlots.filter(s => s.effStatus !== "completado").length;
+  const helpCount = allSlots.filter(s => s.effStatus === "ayuda").length;
 
   return `
   ${state.toast ? `<div class="toast">${esc(state.toast)}</div>` : ""}
@@ -607,41 +657,62 @@ function renderTareas(effTasks, session){
 
 function renderTaskCard(t, session){
   const cat = CATEGORIES[t.category] || CATEGORIES.general;
-  const assigneeEmail = currentAssignee(t);
+  const isMaster = session.role === "master";
+  const allDone = t.slots.every(s => s.effStatus === "completado");
+  return `
+  <div class="taskCard" style="border-left:5px solid ${cat.color}; opacity:${allDone?0.65:1}; flex-direction:column; align-items:stretch;">
+    <div style="display:flex; gap:10px; align-items:flex-start;">
+      <div class="taskIconWrap" style="background:${cat.color}22;">${cat.icon}</div>
+      <div style="flex:1;min-width:0;">
+        <span class="taskTitle" style="text-decoration:${allDone?'line-through':'none'};">${esc(t.title)}</span>
+        <div class="taskMeta">${cat.label} · ${t.recurring==='diario'?'diaria':t.recurring==='semanal'?'semanal':'quincenal'}${t.slots.length>1?` · ${t.slots.length} turnos`:''}</div>
+      </div>
+      ${isMaster ? `<button class="deleteMini" onclick="App.deleteTask('${t.id}')" title="Eliminar tarea">✕</button>` : ""}
+    </div>
+    <div style="display:flex; flex-direction:column; gap:8px; margin-top:8px;">
+      ${t.slots.map(s => renderSlotRow(t, s, cat, session, isMaster)).join("")}
+    </div>
+  </div>`;
+}
+
+function renderSlotRow(t, s, cat, session, isMaster){
+  const assigneeEmail = currentAssignee(s);
   const assignedUser = assigneeEmail ? state.users.find(u => u.email === assigneeEmail) : null;
-  const upcoming = upcomingAssignees(t, 2)
+  const upcoming = upcomingAssignees(s, 2)
     .map(x => ({ user: state.users.find(u => u.email === x.email), weeksAhead: x.weeksAhead }))
     .filter(x => x.user);
-  const isMaster = session.role === "master";
-  const done = t.effStatus === "completado";
-  const helpMode = t.effStatus === "ayuda";
-  const completedByUser = t.completedBy ? state.users.find(u=>u.email===t.completedBy) : null;
+  const done = s.effStatus === "completado";
+  const helpMode = s.effStatus === "ayuda";
+  const completedByUser = s.completedBy ? state.users.find(u=>u.email===s.completedBy) : null;
+  const needsPoints = done && isMaster && s.pointsGivenAt !== s.completedAt;
   return `
-  <div class="taskCard" style="border-left:5px solid ${cat.color}; opacity:${done?0.65:1};">
-    <div class="taskIconWrap" style="background:${cat.color}22;">${cat.icon}</div>
+  <div style="border-top:1px solid #F1ECDC; padding-top:8px; display:flex; gap:10px; align-items:flex-start;">
     <div style="flex:1;min-width:0;">
-      <div><span class="taskTitle" style="text-decoration:${done?'line-through':'none'};">${esc(t.title)}</span>${helpMode?`<span class="helpTag">pide apoyo</span>`:""}</div>
-      <div class="taskMeta">${cat.label} · ${t.recurring==='diario'?'diaria':t.recurring==='semanal'?'semanal':'quincenal'}
-        ${done && completedByUser ? ` · ✓ ${esc(completedByUser.name.split(" ")[0])} · ${formatTime(t.completedAt)}` : ""}</div>
+      ${s.label ? `<div class="sans" style="font-size:11.5px; font-weight:700; color:${cat.color}; margin-bottom:2px;">${s.label==='Mañana'?'🌅':s.label==='Tarde'?'🌇':'👤'} ${esc(s.label)}${helpMode?`<span class="helpTag">pide apoyo</span>`:''}</div>` : (helpMode?`<span class="helpTag">pide apoyo</span>`:"")}
+      ${done && completedByUser ? `<div class="sans" style="font-size:11px; color:var(--muted);">✓ ${esc(completedByUser.name.split(" ")[0])} · ${formatTime(s.completedAt)}${s.points?` · 🏆 ${s.points} pt${s.points>1?'s':''}`:''}</div>` : ""}
       ${assignedUser || upcoming.length ? `
-        <div class="sans" style="display:flex; flex-wrap:wrap; gap:5px; margin-top:6px;">
+        <div class="sans" style="display:flex; flex-wrap:wrap; gap:5px; margin-top:4px;">
           ${assignedUser ? `<span style="font-size:11px; background:${cat.color}22; color:${cat.color}; padding:3px 9px; border-radius:999px; font-weight:700;">🔁 esta semana: ${esc(assignedUser.name.split(" ")[0])}</span>` : `<span style="font-size:11px; background:#F1ECDC; color:var(--muted); padding:3px 9px; border-radius:999px;">sin turnos asignados</span>`}
           ${upcoming.map(x => `<span style="font-size:11px; background:#EFE9D8; color:#5A5748; padding:3px 9px; border-radius:999px;">${x.weeksAhead===1?'próxima semana':`en ${x.weeksAhead} semanas`}: ${esc(x.user.name.split(" ")[0])}</span>`).join("")}
         </div>` : ""}
+      ${needsPoints ? `
+        <div class="sans" style="display:flex; align-items:center; gap:6px; margin-top:6px;">
+          <span style="font-size:11px; color:var(--muted);">Dar puntos:</span>
+          ${[1,2,3].map(p => `<button class="miniBtn" onclick="App.setPoints('${t.id}','${s.id}',${p})">${p} pt${p>1?'s':''}</button>`).join("")}
+        </div>` : ""}
       ${isMaster ? `
         <div style="display:flex; gap:6px; margin-top:6px; flex-wrap:wrap;">
-          <select class="assignMini" onchange="App.overrideWeek('${t.id}', this.value)">
+          <select class="assignMini" onchange="App.overrideWeek('${t.id}','${s.id}', this.value)">
             <option value="">Reasignar solo esta semana…</option>
-            ${state.users.map(u => `<option value="${u.email}" ${assigneeEmail===u.email && t.override && t.override.weekIndex===weekIndex() ?'selected':''}>${esc(u.name)}</option>`).join("")}
+            ${state.users.map(u => `<option value="${u.email}" ${assigneeEmail===u.email && s.override && s.override.weekIndex===weekIndex() ?'selected':''}>${esc(u.name)}</option>`).join("")}
           </select>
-          <button class="miniBtn" onclick="App.openRotation('${t.id}')">🔁 editar turnos</button>
+          <button class="miniBtn" onclick="App.openRotation('${t.id}','${s.id}')">🔁 editar turnos</button>
         </div>` : ""}
     </div>
     <div class="taskActions">
-      <button class="checkBtn ${done?'done':''}" onclick="App.complete('${t.id}')">${done?'✓':'○'}</button>
-      ${!done && !helpMode ? `<button class="miniBtn" onclick="App.requestHelp('${t.id}')">🙋 apoyo</button>` : ""}
-      ${helpMode && t.helpRequestedBy!==session.email ? `<button class="miniBtn take" onclick="App.takeOver('${t.id}')">tomar</button>` : ""}
-      ${isMaster ? `<button class="deleteMini" onclick="App.deleteTask('${t.id}')">✕</button>` : ""}
+      <button class="checkBtn ${done?'done':''}" onclick="App.complete('${t.id}','${s.id}')">${done?'✓':'○'}</button>
+      ${!done && !helpMode ? `<button class="miniBtn" onclick="App.requestHelp('${t.id}','${s.id}')">🙋 apoyo</button>` : ""}
+      ${helpMode && s.helpRequestedBy!==session.email ? `<button class="miniBtn take" onclick="App.takeOver('${t.id}','${s.id}')">tomar</button>` : ""}
     </div>
   </div>`;
 }
@@ -649,22 +720,27 @@ function renderTaskCard(t, session){
 function renderRotationModal(){
   const t = state.tasks.find(x => x.id === state.rotationEditId);
   if (!t) return "";
+  const s = t.slots.find(x => x.id === state.rotationEditSlotId) || t.slots[0];
   const cat = CATEGORIES[t.category] || CATEGORIES.general;
-  const inRotUsers = t.rotation.map(email => state.users.find(u=>u.email===email)).filter(Boolean);
-  const outRotUsers = state.users.filter(u => !t.rotation.includes(u.email));
+  const inRotUsers = s.rotation.map(email => state.users.find(u=>u.email===email)).filter(Boolean);
+  const outRotUsers = state.users.filter(u => !s.rotation.includes(u.email));
   const wi = weekIndex();
   const activeIdx = inRotUsers.length ? wi % inRotUsers.length : -1;
   return `
   <div class="modalOverlay" onclick="if(event.target===this) App.closeRotation()">
     <div class="modalCard">
       <div class="modalHeader"><span class="modalTitle">Turnos: ${esc(t.title)}</span><button class="iconBtn" onclick="App.closeRotation()">✕</button></div>
+      ${t.slots.length > 1 ? `
+        <div style="display:flex; gap:6px; margin-top:10px;">
+          ${t.slots.map(sl => `<button class="chip ${sl.id===s.id?'active':''}" style="${sl.id===s.id?`background:${cat.color};border-color:${cat.color};`:''}" onclick="App.setRotationSlot('${sl.id}')">${sl.label==='Mañana'?'🌅':sl.label==='Tarde'?'🌇':'👤'} ${esc(sl.label||'Turno')}</button>`).join("")}
+        </div>` : ""}
       ${t.recurring !== "diario" ? `
         <div class="field" style="margin-top:8px;"><span class="fieldLabel">Día de la semana</span>
           <div class="inputWrap"><select onchange="App.setWeekday('${t.id}', this.value)">
             ${DAY_NAMES.map((d,i) => `<option value="${i}" ${t.weekday===i?'selected':''}>${d}</option>`).join("")}
           </select></div></div>` : ""}
 
-      <div class="fieldLabel" style="margin-top:14px;">Orden de turnos — quién sigue después de quién. Se activa un nuevo turno cada semana.</div>
+      <div class="fieldLabel" style="margin-top:14px;">Orden de turnos${s.label?` (${esc(s.label)})`:''} — quién sigue después de quién. Se activa un nuevo turno cada semana.</div>
       ${inRotUsers.length===0 ? `<div class="sans" style="font-size:12px; color:var(--muted); margin-top:6px;">Nadie asignado todavía. Agrega participantes abajo.</div>` : ""}
       <div style="display:flex; flex-direction:column; gap:8px; margin-top:10px;">
         ${inRotUsers.map((u,i) => `
@@ -673,10 +749,10 @@ function renderRotationModal(){
             <div style="flex:1;"><div class="memberName">${esc(u.name)} ${i===activeIdx?' · turno actual':''}</div>
               <div class="memberMeta">Turno #${i+1}${i>0?` · después de ${esc(inRotUsers[i-1].name.split(" ")[0])}`:''}</div></div>
             <div style="display:flex; flex-direction:column; gap:2px;">
-              <button class="miniBtn" ${i===0?'disabled style="opacity:.35;"':''} onclick="App.moveRotationMember('${t.id}','${u.email}',-1)">↑</button>
-              <button class="miniBtn" ${i===inRotUsers.length-1?'disabled style="opacity:.35;"':''} onclick="App.moveRotationMember('${t.id}','${u.email}',1)">↓</button>
+              <button class="miniBtn" ${i===0?'disabled style="opacity:.35;"':''} onclick="App.moveRotationMember('${t.id}','${s.id}','${u.email}',-1)">↑</button>
+              <button class="miniBtn" ${i===inRotUsers.length-1?'disabled style="opacity:.35;"':''} onclick="App.moveRotationMember('${t.id}','${s.id}','${u.email}',1)">↓</button>
             </div>
-            <button class="deleteMini" onclick="App.toggleRotationMember('${t.id}','${u.email}')" title="Quitar de esta tarea">✕</button>
+            <button class="deleteMini" onclick="App.toggleRotationMember('${t.id}','${s.id}','${u.email}')" title="Quitar de esta tarea">✕</button>
           </div>`).join("")}
       </div>
 
@@ -685,7 +761,7 @@ function renderRotationModal(){
         ${outRotUsers.length===0 ? `<div class="sans" style="font-size:12px; color:var(--muted);">Todos los miembros ya participan en esta tarea.</div>` : ""}
         ${outRotUsers.map(u => `
           <label class="memberCard" style="margin-bottom:0; cursor:pointer; opacity:.7;">
-            <input type="checkbox" onchange="App.toggleRotationMember('${t.id}','${u.email}')" style="width:18px;height:18px;">
+            <input type="checkbox" onchange="App.toggleRotationMember('${t.id}','${s.id}','${u.email}')" style="width:18px;height:18px;">
             <div class="avatar" style="background:${colorFor(u.email)};">${initials(u.name)}</div>
             <div style="flex:1;"><div class="memberName">${esc(u.name)}</div>
               <div class="memberMeta">No participa en esta tarea</div></div>
@@ -715,18 +791,18 @@ function renderCalendario(effTasks){
             <span class="sans" style="font-size:11px; color:var(--muted);">${day.date.toLocaleDateString('es-MX',{day:'numeric',month:'short'})}</span>
           </div>
           ${due.length===0 ? `<div class="sans" style="font-size:12px; color:var(--muted);">Sin tareas programadas</div>` : ""}
-          ${due.map(t => {
+          ${due.flatMap(t => t.slots.map(s => {
             const cat = CATEGORIES[t.category] || CATEGORIES.general;
-            const assigneeEmail = currentAssignee(t);
+            const assigneeEmail = currentAssignee(s);
             const assignedUser = assigneeEmail ? state.users.find(u=>u.email===assigneeEmail) : null;
-            const doneToday = day.isToday && t.effStatus === "completado" && t.completedAt && new Date(t.completedAt).toDateString() === todayStr;
+            const doneToday = day.isToday && s.effStatus === "completado" && s.completedAt && new Date(s.completedAt).toDateString() === todayStr;
             return `<div style="display:flex; align-items:center; gap:8px; padding:6px 0; border-top:1px solid #F1ECDC;">
               <span style="font-size:15px;">${cat.icon}</span>
-              <span class="sans" style="flex:1; font-size:13px; text-decoration:${doneToday?'line-through':'none'}; opacity:${doneToday?0.6:1};">${esc(t.title)}</span>
+              <span class="sans" style="flex:1; font-size:13px; text-decoration:${doneToday?'line-through':'none'}; opacity:${doneToday?0.6:1};">${esc(t.title)}${s.label?` <span style="color:var(--muted);">· ${esc(s.label)}</span>`:''}</span>
               ${assignedUser ? `<span class="sans" style="font-size:11px; color:#5A5748; background:#EFE9D8; padding:2px 8px; border-radius:999px;">${esc(assignedUser.name.split(" ")[0])}</span>` : ""}
               ${doneToday ? `<span style="color:var(--sage);">✓</span>` : ""}
             </div>`;
-          }).join("")}
+          })).join("")}
         </div>`;
       }).join("")}
     </div>
@@ -758,15 +834,38 @@ function renderNotifs(myUnread){
 }
 
 function renderFamilia(effTasks){
-  return state.users.map(u => {
-    const done = effTasks.filter(t => t.completedBy===u.email && t.effStatus==="completado").length;
-    return `<div class="memberCard">
-      <div class="avatar" style="background:${colorFor(u.email)};">${initials(u.name)}</div>
-      <div style="flex:1;"><div class="memberName">${esc(u.name)} ${u.role==='master'?'👑':''}</div>
-        <div class="memberMeta">${esc(u.email)}</div></div>
-      <div class="memberScore">⭐ ${done}</div>
-    </div>`;
-  }).join("");
+  const now = new Date();
+  const monthLabel = now.toLocaleDateString('es-MX', { month: 'long', year: 'numeric' });
+  const monthlyPoints = {};
+  state.pointsLog.forEach(p => {
+    const d = new Date(p.ts);
+    if (d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear()){
+      monthlyPoints[p.email] = (monthlyPoints[p.email] || 0) + p.points;
+    }
+  });
+  const ranked = state.users.map(u => ({ user: u, pts: monthlyPoints[u.email] || 0 }))
+    .sort((a,b) => b.pts - a.pts);
+  const medals = ["🥇","🥈","🥉"];
+  return `
+    <div class="fieldLabel" style="margin-bottom:8px;">🏆 Puntos de ${monthLabel}</div>
+    ${ranked.map((r,i) => `<div class="memberCard">
+      <div class="avatar" style="background:${colorFor(r.user.email)};">${initials(r.user.name)}</div>
+      <div style="flex:1;"><div class="memberName">${medals[i]||''} ${esc(r.user.name)} ${r.user.role==='master'?'👑':''}</div>
+        <div class="memberMeta">${esc(r.user.email)}</div></div>
+      <div class="memberScore">🏆 ${r.pts} pt${r.pts===1?'':'s'}</div>
+    </div>`).join("")}
+
+    <div class="fieldLabel" style="margin:18px 0 8px;">✅ Tareas activas completadas</div>
+    ${state.users.map(u => {
+      const done = effTasks.flatMap(t=>t.slots).filter(s => s.completedBy===u.email && s.effStatus==="completado").length;
+      return `<div class="memberCard">
+        <div class="avatar" style="background:${colorFor(u.email)};">${initials(u.name)}</div>
+        <div style="flex:1;"><div class="memberName">${esc(u.name)} ${u.role==='master'?'👑':''}</div>
+          <div class="memberMeta">${esc(u.email)}</div></div>
+        <div class="memberScore">⭐ ${done}</div>
+      </div>`;
+    }).join("")}
+  `;
 }
 
 function renderAddTaskModal(){
@@ -783,6 +882,12 @@ function renderAddTaskModal(){
       <div class="field"><span class="fieldLabel">Frecuencia</span>
         <div class="inputWrap"><select id="nt-rec" onchange="App.setNewTask('recurring', this.value)">
           <option value="diario">Diaria</option><option value="semanal">Semanal</option><option value="quincenal">Quincenal</option>
+        </select></div></div>
+      <div class="field"><span class="fieldLabel">¿Cómo se reparte esta tarea?</span>
+        <div class="inputWrap"><select id="nt-slotmode" onchange="App.setNewTask('slotMode', this.value)">
+          <option value="1" ${state.newTask.slotMode==='1'?'selected':''}>Una persona</option>
+          <option value="2juntas" ${state.newTask.slotMode==='2juntas'?'selected':''}>Dos personas (mismo horario)</option>
+          <option value="manana-tarde" ${state.newTask.slotMode==='manana-tarde'?'selected':''}>Dos personas — mañana y tarde</option>
         </select></div></div>
       <div class="field"><span class="fieldLabel">¿Quiénes rotan esta tarea?</span>
         <div style="display:flex; flex-direction:column; gap:6px; margin-top:4px;">
